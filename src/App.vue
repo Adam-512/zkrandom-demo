@@ -7,32 +7,76 @@
     </p>
     <form-wizard ref="stepCom" @onNextStep="onNextStep">
       <tab-content title="创建项目" :selected="true">
-        <div class="step1-wrap">
+        <label class="radioWrap" for="useStoreId">
+          <input id="useStoreId" type="radio" name="type" value="0" v-model="createType" />
+          <p>
+            使用已创建的ProjectId：
+            <span
+              class="underline blue-text"
+              @click="openBrowser(storeProjectId)"
+            >{{ storeProjectId }}</span>
+          </p>
+        </label>
+        <label class="radioWrap" for="useNewId">
+          <input id="useNewId" type="radio" name="type" value="1" v-model="createType" />
+          <p>创建新项目</p>
+        </label>
+        <div class="step-wrap">
           <div class="form-group item-input-wrap">
             <label for="fullName">项目名称</label>
             <input v-focus type="text" class="cus-input" v-model="pjName" />
           </div>
           <div class="form-group item-input-wrap">
             <label for="fullName">质押金额</label>
-            <input v-focus type="text" class="cus-input" v-model="stakeAmount" />
+            <input type="text" class="cus-input" v-model="stakeAmount" />
           </div>
-          <button type="button" class="step-button blue" @click="getRandom(item)">确认</button>
+          <p class="mb-15 mt-15">最小质押金额：（{{ minStake }}{{ stakeToken }}）</p>
+          <p class="success-text mb-15" v-show="projectId">
+            项目创建成功！
+            <span
+              class="underline"
+              title="在浏览器上查看"
+              @click="openBrowser(projectId)"
+            >projectId：{{ projectId }}</span>
+          </p>
+          <button
+            v-show="!loadingPj && !projectId"
+            type="button"
+            class="step-button blue"
+            @click="doCreateProject"
+          >
+            <span class="btn-text">确认</span>
+          </button>
+          <button v-show="loadingPj && !projectId" class="step-button blue" disabled>
+            <span class="iconify loadding-icon" data-icon="eos-icons:loading"></span>
+          </button>
+          <button v-show="projectId && !loadingPj" class="step-button blue" disabled>
+            <span class="iconify" data-icon="clarity:success-line"></span>
+          </button>
         </div>
       </tab-content>
       <tab-content title="创建随机数item">
-        <div
-          class="form-group item-input-wrap"
-          v-for="(v,index) in inputList"
-          :key="index + 'item'"
-        >
-          <label for="companyName">Item</label>
-          <input v-focus type="text" class="cus-input" v-model="items['data' + v].value" />
-          <span @click="createInput">
-            <span class="cus-icon iconify" data-icon="carbon:add-filled"></span>
-          </span>
-          <span @click="deleteInput(v, index)">
-            <span class="cus-icon red iconify" data-icon="carbon:close-filled"></span>
-          </span>
+        <div class="step-wrap">
+          <div
+            class="form-group item-input-wrap"
+            v-for="(v,index) in inputList"
+            :key="index + 'item'"
+          >
+            <label for="companyName">Item</label>
+            <input v-focus type="text" class="cus-input" v-model="items['data' + v].value" disabled />
+            <span @click="createInput" v-show="items['data' + v].value">
+              <span class="cus-icon iconify" data-icon="carbon:add-filled"></span>
+            </span>
+            <span @click="deleteInput(v, index)" v-show="index != 0">
+              <span class="cus-icon red iconify" data-icon="carbon:close-filled"></span>
+            </span>
+          </div>
+          <button v-show="!loadingItem" type="button" class="step-button blue" @click="createItem">
+            <span class="btn-text">创建</span>
+          </button>
+          <button v-show="loadingItem" class="step-button blue" disabled>
+            <span class="iconify loadding-icon" data-icon="eos-icons:loading"></span>
+          </button>
         </div>
       </tab-content>
       <tab-content title="生成随机数">
@@ -52,12 +96,15 @@
 </template>
 
 <script>
+import { ZkRandomCore } from './contract/zkRandomCore'
+import { removeDecimal, withDecimal } from './util'
 import { Wallet } from './util/wallet'
 
 export default {
   name: 'App',
   data() {
     return {
+      createType: '0',
       pjName: '',
       stakeAmount: '',
       itemName: '',
@@ -72,6 +119,13 @@ export default {
       wallet: null,
       address: '--',
       zkRandomCore: null,
+      stakeToken: null,
+      minStake: null,
+      loadingPj: false,
+      loadingItem: false,
+      projectId: null,
+      storeProjectId: localStorage.getItem('projectId'),
+      targetItemKey: '0',
     }
   },
   computed: {
@@ -85,6 +139,13 @@ export default {
   async mounted() {
     this.wallet = new Wallet(this)
 
+    this.zkRandomCore = new ZkRandomCore()
+
+    await this.zkRandomCore.init(this.wallet.signer)
+
+    this.stakeToken = this.zkRandomCore.token;
+    this.minStake = removeDecimal(await this.zkRandomCore.getMinDeposit(), this.zkRandomCore.decimal)
+
     this.$nextTick(() => {
       let btn1 = document.querySelector('.step-button-previous')
       if (btn1) btn1.innerText = '上一步'
@@ -94,9 +155,9 @@ export default {
   },
   methods: {
     createInput() {
-      let key = Math.random()
-      this.inputList.push(key)
-      this.$set(this.items, `data${key}`, {
+      this.targetItemKey = Math.random()
+      this.inputList.push(this.targetItemKey)
+      this.$set(this.items, `data${this.targetItemKey}`, {
         value: '',
         loading: false
       })
@@ -117,11 +178,41 @@ export default {
     },
     connectWallet() {
       this.wallet.connectWallet()
+    },
+    async doCreateProject() {
+      if (!this.address) {
+        this.connectWallet();
+        return;
+      }
+      if (this.pjName == '' || this.stakeAmount == '') {
+        return
+      }
+      this.loadingPj = true
+      this.projectId = await this.zkRandomCore.regist(this.pjName, this.address, withDecimal(this.stakeAmount, this.zkRandomCore.decimal)).finally(() => { this.loadingPj = false })
+      localStorage.setItem('projectId', this.projectId)
+      this.storeProjectId = this.projectId
+    },
+    openBrowser(projectId) {
+      window.open(`https://zk-random-browser.vercel.app/#/projectsDetail?projectId=${projectId}`, '__blank')
+    },
+    async createItem() {
+      if (!this.storeProjectId) {
+        return
+      }
+      this.loadingItem = true
+      let itemId = await this.zkRandomCore.newItem(this.storeProjectId).finally(() => this.loadingItem = false)
+      this.$set(this.items, `data${this.targetItemKey}`, {
+        value: itemId,
+        loading: false
+      })
     }
   }
 }
 </script>
 <style lang="scss">
+p {
+  margin: 0;
+}
 .title {
   width: 980px;
   margin: 0 auto;
@@ -197,6 +288,16 @@ export default {
 .step-button.blue {
   background-color: #4b8aeb;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  svg {
+    margin: 0 5px;
+  }
+  &:disabled {
+    cursor: not-allowed;
+    filter: brightness(1.2);
+  }
 }
 
 .none {
@@ -208,14 +309,38 @@ export default {
   position: relative;
 }
 
-.step-body  .step1-wrap {
+.step-body .step-wrap {
   padding-bottom: 40px;
-  .step-button{
+  .step-button {
     margin: 0;
     position: absolute;
-    bottom:20px;
+    bottom: 20px;
     left: 50%;
     transform: translateX(-50%);
   }
+}
+
+.success-text {
+  color: green;
+}
+.blue-text {
+  color: #4b8aeb;
+}
+.underline {
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.radioWrap {
+  display: flex;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.mb-15 {
+  margin-bottom: 15px;
+}
+.mt-15 {
+  margin-top: 15px;
 }
 </style>

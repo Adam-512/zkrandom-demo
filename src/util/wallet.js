@@ -1,7 +1,7 @@
 import { ethers } from "ethers";
 import MetaMaskOnboarding from "@metamask/onboarding";
 
-import { ZkRandomCore } from "../contract/zkRandomCore";
+import { CHAIN_ID_HEX, CHAIN_PARAMS } from "../contract/const";
 
 export class Wallet {
   constructor(vm) {
@@ -11,17 +11,22 @@ export class Wallet {
 
     window.ethereum.on("accountsChanged", async function (accountList) {
       console.log("accountsChanged", accountList);
+      await checkNetwork();
       vm.address = accountList[0];
+    });
 
-      vm.zkRandomCore = new ZkRandomCore(this.signer);
+    window.ethereum.on("chainChanged", async function () {
+      window.location.reload();
     });
 
     (async () => {
       try {
+        await checkNetwork();
+        console.log("auto init");
         vm.address = await this.signer.getAddress();
-
-        vm.zkRandomCore = new ZkRandomCore(this.signer);
       } catch (error) {
+        console.log(error);
+
         setTimeout(() => {
           vm.address = "";
         }, 500);
@@ -29,9 +34,11 @@ export class Wallet {
       }
     })();
   }
-  connectWallet() {
+  async connectWallet() {
     const onboarding = new MetaMaskOnboarding();
     if (MetaMaskOnboarding.isMetaMaskInstalled()) {
+      await checkNetwork();
+
       window.ethereum.enable();
     } else {
       onboarding.startOnboarding();
@@ -39,5 +46,41 @@ export class Wallet {
   }
   async getAddress() {
     return await this.signer.getAddress();
+  }
+  async getChainId() {
+    return await this.signer.getChainId();
+  }
+}
+
+// eslint-disable-next-line no-unused-vars
+async function checkNetwork() {
+  async function requestSwitchNetwork() {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: CHAIN_ID_HEX }],
+    });
+  }
+  async function requestAddNetwork() {
+    await window.ethereum.request({
+      method: "wallet_addEthereumChain",
+      params: [CHAIN_PARAMS],
+    });
+  }
+  try {
+    await requestSwitchNetwork();
+  } catch (switchError) {
+    // This error code indicates that the chain has not been added to MetaMask.
+    if (switchError.code === 4902) {
+      try {
+        await requestAddNetwork();
+        await requestSwitchNetwork();
+      } catch (addErr) {
+        // handle "add" error
+        throw new Error(`Could not add chain: ${addErr.message}`);
+      }
+    }
+    if (switchError.code == 4001) {
+      throw new Error(`User rejected the request.`);
+    }
   }
 }
