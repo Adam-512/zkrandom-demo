@@ -137,14 +137,11 @@ export default {
     }
   },
   async mounted() {
-    this.wallet = new Wallet(this)
+    this.$on('accountsChanged', function () {
+      this.init()
+    })
 
-    this.zkRandomCore = new ZkRandomCore()
-
-    await this.zkRandomCore.init(this.wallet.signer)
-
-    this.stakeToken = this.zkRandomCore.token;
-    this.minStake = removeDecimal(await this.zkRandomCore.getMinDeposit(), this.zkRandomCore.decimal)
+    this.init()
 
     this.$nextTick(() => {
       let btn1 = document.querySelector('.step-button-previous')
@@ -153,6 +150,7 @@ export default {
       if (btn2) btn2.innerText = '下一步'
     })
   },
+
   methods: {
     createInput() {
       this.targetItemKey = Math.random()
@@ -205,6 +203,14 @@ export default {
         value: itemId,
         loading: false
       })
+    },
+    async init() {
+      this.wallet = new Wallet(this)
+      this.zkRandomCore = new ZkRandomCore()
+      await this.zkRandomCore.init(this.wallet.signer)
+
+      this.stakeToken = this.zkRandomCore.token;
+      this.minStake = removeDecimal(await this.zkRandomCore.getMinDeposit(), this.zkRandomCore.decimal)
     }
   }
 }

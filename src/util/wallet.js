@@ -11,6 +11,7 @@ export class Wallet {
 
     window.ethereum.on("accountsChanged", async function (accountList) {
       console.log("accountsChanged", accountList);
+      vm.$emit('accountsChanged')
       await checkNetwork();
       vm.address = accountList[0];
     });
